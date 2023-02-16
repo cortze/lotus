@@ -549,8 +549,22 @@ func (trw *tracerWrapper) Trace(evt *pubsub_pb.TraceEvent) {
 		}
 	case pubsub_pb.TraceEvent_RECV_RPC:
 		stats.Record(context.TODO(), metrics.PubsubRecvRPC.M(1))
+		if trw.lp2pTracer != nil {
+			trw.lp2pTracer.Trace(evt)
+		}
+
+		if trw.lotusTracer != nil {
+			trw.lotusTracer.Trace(evt)
+		}
 	case pubsub_pb.TraceEvent_SEND_RPC:
 		stats.Record(context.TODO(), metrics.PubsubSendRPC.M(1))
+		if trw.lp2pTracer != nil {
+			trw.lp2pTracer.Trace(evt)
+		}
+
+		if trw.lotusTracer != nil {
+			trw.lotusTracer.Trace(evt)
+		}
 	case pubsub_pb.TraceEvent_DROP_RPC:
 		stats.Record(context.TODO(), metrics.PubsubDropRPC.M(1))
 	}
