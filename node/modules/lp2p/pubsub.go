@@ -430,7 +430,7 @@ func GossipSub(in GossipIn) (service *pubsub.PubSub, err error) {
 		options = append(options, pubsub.WithPeerScoreInspect(pst.UpdatePeerScore, 10*time.Second))
 	} else {
 		// still instantiate a tracer for collecting metrics
-		trw := newTracerWrapper(nil, lt)
+		trw := newTracerWrapper(nil, lt, build.BlocksTopic(in.Nn))
 		options = append(options, pubsub.WithEventTracer(trw))
 
 		pst := newPeerScoreTracker(lt, in.Sk)
@@ -486,85 +486,157 @@ func (trw *tracerWrapper) Trace(evt *pubsub_pb.TraceEvent) {
 			if trw.lp2pTracer != nil {
 				trw.lp2pTracer.Trace(evt)
 			}
-
 			if trw.lotusTracer != nil {
 				trw.lotusTracer.Trace(evt)
 			}
 		}
+
 	case pubsub_pb.TraceEvent_DELIVER_MESSAGE:
 		stats.Record(context.TODO(), metrics.PubsubDeliverMessage.M(1))
 		if trw.traceMessage(evt.GetDeliverMessage().GetTopic()) {
 			if trw.lp2pTracer != nil {
 				trw.lp2pTracer.Trace(evt)
 			}
-
 			if trw.lotusTracer != nil {
 				trw.lotusTracer.Trace(evt)
 			}
 		}
+
 	case pubsub_pb.TraceEvent_REJECT_MESSAGE:
 		stats.Record(context.TODO(), metrics.PubsubRejectMessage.M(1))
 		if trw.traceMessage(evt.GetRejectMessage().GetTopic()) {
 			if trw.lp2pTracer != nil {
 				trw.lp2pTracer.Trace(evt)
 			}
-
 			if trw.lotusTracer != nil {
 				trw.lotusTracer.Trace(evt)
 			}
 		}
+
 	case pubsub_pb.TraceEvent_DUPLICATE_MESSAGE:
 		stats.Record(context.TODO(), metrics.PubsubDuplicateMessage.M(1))
+		if trw.traceMessage(evt.GetDuplicateMessage().GetTopic()) {
+			if trw.lp2pTracer != nil {
+				trw.lp2pTracer.Trace(evt)
+			}
+			if trw.lotusTracer != nil {
+				trw.lotusTracer.Trace(evt)
+			}
+		}
+
 	case pubsub_pb.TraceEvent_JOIN:
 		if trw.lp2pTracer != nil {
 			trw.lp2pTracer.Trace(evt)
 		}
-
 		if trw.lotusTracer != nil {
 			trw.lotusTracer.Trace(evt)
 		}
+
 	case pubsub_pb.TraceEvent_LEAVE:
 		if trw.lp2pTracer != nil {
 			trw.lp2pTracer.Trace(evt)
 		}
-
 		if trw.lotusTracer != nil {
 			trw.lotusTracer.Trace(evt)
 		}
+
 	case pubsub_pb.TraceEvent_GRAFT:
 		if trw.lp2pTracer != nil {
 			trw.lp2pTracer.Trace(evt)
 		}
-
 		if trw.lotusTracer != nil {
 			trw.lotusTracer.Trace(evt)
 		}
+
 	case pubsub_pb.TraceEvent_PRUNE:
 		if trw.lp2pTracer != nil {
 			trw.lp2pTracer.Trace(evt)
 		}
-
 		if trw.lotusTracer != nil {
 			trw.lotusTracer.Trace(evt)
 		}
+
 	case pubsub_pb.TraceEvent_RECV_RPC:
 		stats.Record(context.TODO(), metrics.PubsubRecvRPC.M(1))
-		if trw.lp2pTracer != nil {
-			trw.lp2pTracer.Trace(evt)
+
+		// only track the RPC Calls from IWANT / IHAVE / BLOCK topic
+		controlRPC := evt.GetRecvRPC().GetMeta().GetControl()
+		ihave := controlRPC.GetIhave()
+		iwant := controlRPC.GetIwant()
+		msgsRPC := evt.GetRecvRPC().GetMeta().GetMessages()
+
+		// check if any of the messages we are sending belong to a trackable topic
+		var validTopic bool = false
+		for _, topic := range msgsRPC {
+			if trw.traceMessage(topic.GetTopic()) {
+				validTopic = true
+				break
+			}
+		}
+		// track if the Iwant / Ihave messages are from a valid Topic
+		var validIhave bool = false
+		for _, msgs := range ihave {
+			if trw.traceMessage(msgs.GetTopic()) {
+				validIhave = true
+				break
+			}
+		}
+		// check if we have any of iwant msgs (it doesn't classify per topic - just msg.ID)
+		var validIwant bool = false
+		if len(iwant) > 0 {
+			validIwant = true
 		}
 
-		if trw.lotusTracer != nil {
-			trw.lotusTracer.Trace(evt)
+		// trace the event if any of the flags was triggered
+		if validIhave || validIwant || validTopic {
+			if trw.lp2pTracer != nil {
+				trw.lp2pTracer.Trace(evt)
+			}
+			if trw.lotusTracer != nil {
+				trw.lotusTracer.Trace(evt)
+			}
 		}
+
 	case pubsub_pb.TraceEvent_SEND_RPC:
 		stats.Record(context.TODO(), metrics.PubsubSendRPC.M(1))
-		if trw.lp2pTracer != nil {
-			trw.lp2pTracer.Trace(evt)
+
+		// only track the RPC Calls from IWANT / IHAVE / BLOCK topic
+		controlRPC := evt.GetSendRPC().GetMeta().GetControl()
+		ihave := controlRPC.GetIhave()
+		iwant := controlRPC.GetIwant()
+		msgsRPC := evt.GetSendRPC().GetMeta().GetMessages()
+
+		// check if any of the messages we are sending belong to a trackable topic
+		var validTopic bool = false
+		for _, topic := range msgsRPC {
+			if trw.traceMessage(topic.GetTopic()) {
+				validTopic = true
+				break
+			}
+		}
+		// track if the Iwant / Ihave messages are from a valid Topic
+		var validIhave bool = false
+		for _, msgs := range ihave {
+			if trw.traceMessage(msgs.GetTopic()) {
+				validIhave = true
+				break
+			}
+		}
+		// check if there was any of the Iwant msgs
+		var validIwant bool = false
+		if len(iwant) > 0 {
+			validIwant = true
+		}
+		// trace the msgs if any of the flags was triggered
+		if validIhave || validIwant || validTopic {
+			if trw.lp2pTracer != nil {
+				trw.lp2pTracer.Trace(evt)
+			}
+			if trw.lotusTracer != nil {
+				trw.lotusTracer.Trace(evt)
+			}
 		}
 
-		if trw.lotusTracer != nil {
-			trw.lotusTracer.Trace(evt)
-		}
 	case pubsub_pb.TraceEvent_DROP_RPC:
 		stats.Record(context.TODO(), metrics.PubsubDropRPC.M(1))
 	}
