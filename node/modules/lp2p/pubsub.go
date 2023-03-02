@@ -428,9 +428,18 @@ func GossipSub(in GossipIn) (service *pubsub.PubSub, err error) {
 
 		options = append(options, pubsub.WithEventTracer(trw))
 		options = append(options, pubsub.WithPeerScoreInspect(pst.UpdatePeerScore, 10*time.Second))
-	} else {
+
+	} else if in.Cfg.ElasticSearchTracer != "" {
 		// still instantiate a tracer for collecting metrics
 		trw := newTracerWrapper(nil, lt, build.BlocksTopic(in.Nn))
+		options = append(options, pubsub.WithEventTracer(trw))
+
+		pst := newPeerScoreTracker(lt, in.Sk)
+		options = append(options, pubsub.WithPeerScoreInspect(pst.UpdatePeerScore, 10*time.Second))
+
+	} else {
+		// still instantiate a tracer for collecting metrics
+		trw := newTracerWrapper(nil, lt)
 		options = append(options, pubsub.WithEventTracer(trw))
 
 		pst := newPeerScoreTracker(lt, in.Sk)
@@ -493,78 +502,32 @@ func (trw *tracerWrapper) Trace(evt *pubsub_pb.TraceEvent) {
 
 	case pubsub_pb.TraceEvent_DELIVER_MESSAGE:
 		stats.Record(context.TODO(), metrics.PubsubDeliverMessage.M(1))
-		if trw.traceMessage(evt.GetDeliverMessage().GetTopic()) {
-			if trw.lp2pTracer != nil {
-				trw.lp2pTracer.Trace(evt)
-			}
-			if trw.lotusTracer != nil {
-				trw.lotusTracer.Trace(evt)
-			}
-		}
 
 	case pubsub_pb.TraceEvent_REJECT_MESSAGE:
 		stats.Record(context.TODO(), metrics.PubsubRejectMessage.M(1))
-		if trw.traceMessage(evt.GetRejectMessage().GetTopic()) {
-			if trw.lp2pTracer != nil {
-				trw.lp2pTracer.Trace(evt)
-			}
-			if trw.lotusTracer != nil {
-				trw.lotusTracer.Trace(evt)
-			}
-		}
 
 	case pubsub_pb.TraceEvent_DUPLICATE_MESSAGE:
 		stats.Record(context.TODO(), metrics.PubsubDuplicateMessage.M(1))
-		if trw.traceMessage(evt.GetDuplicateMessage().GetTopic()) {
-			if trw.lp2pTracer != nil {
-				trw.lp2pTracer.Trace(evt)
-			}
-			if trw.lotusTracer != nil {
-				trw.lotusTracer.Trace(evt)
-			}
-		}
 
 	case pubsub_pb.TraceEvent_JOIN:
-		if trw.lp2pTracer != nil {
-			trw.lp2pTracer.Trace(evt)
-		}
-		if trw.lotusTracer != nil {
-			trw.lotusTracer.Trace(evt)
-		}
+		stats.Record(context.TODO(), metrics.PubsubRecvRPC.M(1))
 
 	case pubsub_pb.TraceEvent_LEAVE:
-		if trw.lp2pTracer != nil {
-			trw.lp2pTracer.Trace(evt)
-		}
-		if trw.lotusTracer != nil {
-			trw.lotusTracer.Trace(evt)
-		}
+		stats.Record(context.TODO(), metrics.PubsubRecvRPC.M(1))
 
 	case pubsub_pb.TraceEvent_GRAFT:
-		if trw.lp2pTracer != nil {
-			trw.lp2pTracer.Trace(evt)
-		}
-		if trw.lotusTracer != nil {
-			trw.lotusTracer.Trace(evt)
-		}
+		stats.Record(context.TODO(), metrics.PubsubRecvRPC.M(1))
 
 	case pubsub_pb.TraceEvent_PRUNE:
-		if trw.lp2pTracer != nil {
-			trw.lp2pTracer.Trace(evt)
-		}
-		if trw.lotusTracer != nil {
-			trw.lotusTracer.Trace(evt)
-		}
+		stats.Record(context.TODO(), metrics.PubsubRecvRPC.M(1))
 
 	case pubsub_pb.TraceEvent_RECV_RPC:
 		stats.Record(context.TODO(), metrics.PubsubRecvRPC.M(1))
-
 		// only track the RPC Calls from IWANT / IHAVE / BLOCK topic
-		controlRPC := evt.GetRecvRPC().GetMeta().GetControl()
+		controlRPC := evt.GetRecvRPC().GetMeta().GetControl
 		ihave := controlRPC.GetIhave()
 		iwant := controlRPC.GetIwant()
 		msgsRPC := evt.GetRecvRPC().GetMeta().GetMessages()
-
 		// check if any of the messages we are sending belong to a trackable topic
 		var validTopic bool = false
 		for _, topic := range msgsRPC {
@@ -586,7 +549,6 @@ func (trw *tracerWrapper) Trace(evt *pubsub_pb.TraceEvent) {
 		if len(iwant) > 0 {
 			validIwant = true
 		}
-
 		// trace the event if any of the flags was triggered
 		if validIhave || validIwant || validTopic {
 			if trw.lp2pTracer != nil {
@@ -599,13 +561,11 @@ func (trw *tracerWrapper) Trace(evt *pubsub_pb.TraceEvent) {
 
 	case pubsub_pb.TraceEvent_SEND_RPC:
 		stats.Record(context.TODO(), metrics.PubsubSendRPC.M(1))
-
 		// only track the RPC Calls from IWANT / IHAVE / BLOCK topic
 		controlRPC := evt.GetSendRPC().GetMeta().GetControl()
 		ihave := controlRPC.GetIhave()
 		iwant := controlRPC.GetIwant()
 		msgsRPC := evt.GetSendRPC().GetMeta().GetMessages()
-
 		// check if any of the messages we are sending belong to a trackable topic
 		var validTopic bool = false
 		for _, topic := range msgsRPC {
