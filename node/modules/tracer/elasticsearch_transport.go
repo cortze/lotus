@@ -28,8 +28,9 @@ func NewElasticSearchTransport(connectionString string, elasticsearchIndex strin
 		Addresses: []string{
 			conUrl.Scheme + "://" + conUrl.Host,
 		},
-		Username: username,
-		Password: password,
+		Username:  username,
+		Password:  password,
+		Transport: &FastHttpTransport{},
 	}
 
 	es, err := elasticsearch.NewClient(cfg)
