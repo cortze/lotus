@@ -524,7 +524,7 @@ func (trw *tracerWrapper) Trace(evt *pubsub_pb.TraceEvent) {
 	case pubsub_pb.TraceEvent_RECV_RPC:
 		stats.Record(context.TODO(), metrics.PubsubRecvRPC.M(1))
 		// only track the RPC Calls from IWANT / IHAVE / BLOCK topic
-		controlRPC := evt.GetRecvRPC().GetMeta().GetControl
+		controlRPC := evt.GetRecvRPC().GetMeta().GetControl()
 		ihave := controlRPC.GetIhave()
 		iwant := controlRPC.GetIwant()
 		msgsRPC := evt.GetRecvRPC().GetMeta().GetMessages()
