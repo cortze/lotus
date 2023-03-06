@@ -1,18 +1,21 @@
 package tracer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"strings"
+	"time"
 
 	"github.com/elastic/go-elasticsearch/v7"
-	"github.com/elastic/go-elasticsearch/v7/esapi"
+	"github.com/elastic/go-elasticsearch/v7/esutil"
 )
 
 const (
 	ElasticSearchDefaultIndex = "lotus-pubsub"
+	flushBytes                = 1024 * 1024 // MB
+	esWorkers                 = 2           // TODO: hardcoded
 )
 
 func NewElasticSearchTransport(connectionString string, elasticsearchIndex string) (TracerTransport, error) {
@@ -34,7 +37,6 @@ func NewElasticSearchTransport(connectionString string, elasticsearchIndex strin
 	}
 
 	es, err := elasticsearch.NewClient(cfg)
-
 	if err != nil {
 		return nil, err
 	}
@@ -46,14 +48,30 @@ func NewElasticSearchTransport(connectionString string, elasticsearchIndex strin
 		esIndex = ElasticSearchDefaultIndex
 	}
 
+	// Create the BulkIndexer to batch ES trace submission
+	bi, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
+		Index:         esIndex,
+		Client:        es,
+		NumWorkers:    esWorkers,
+		FlushBytes:    int(flushBytes),
+		FlushInterval: 10 * time.Second,
+		OnError: func(ctx context.Context, err error) {
+			fmt.Println("Error persisting queries %s", err.Error())
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &elasticSearchTransport{
 		cl:      es,
+		bi:      bi,
 		esIndex: esIndex,
 	}, nil
 }
 
 type elasticSearchTransport struct {
 	cl      *elasticsearch.Client
+	bi      esutil.BulkIndexer
 	esIndex string
 }
 
@@ -73,26 +91,23 @@ func (est *elasticSearchTransport) Transport(evt TracerTransportEvent) error {
 		return fmt.Errorf("error while marshaling event: %s", err)
 	}
 
-	req := esapi.IndexRequest{
-		Index:   est.esIndex,
-		Body:    strings.NewReader(string(jsonEvt)),
-		Refresh: "true",
-	}
-
-	// Perform the request with the client.
-	res, err := req.Do(context.Background(), est.cl)
-	if err != nil {
-		return err
-	}
-
-	err = res.Body.Close()
-	if err != nil {
-		return err
-	}
-
-	if res.IsError() {
-		return fmt.Errorf("[%s] Error indexing document ID=%s", res.Status(), req.DocumentID)
-	}
-
-	return nil
+	err = est.bi.Add(
+		context.Background(),
+		esutil.BulkIndexerItem{
+			Action: "index",
+			Body:   bytes.NewReader(jsonEvt),
+			OnSuccess: func(ctx context.Context, item esutil.BulkIndexerItem, res esutil.BulkIndexerResponseItem) {
+				fmt.Println("SUCCESS: successfully submitted event", evt)
+			},
+			OnFailure: func(ctx context.Context, item esutil.BulkIndexerItem, res esutil.BulkIndexerResponseItem, err error) {
+				if err != nil {
+					fmt.Println("ERROR: %s", err)
+				} else {
+					fmt.Println("ERROR: %s: %s", res.Error.Type, res.Error.Reason)
+				}
+			},
+		},
+	)
+	fmt.Println("BULK_STATS", est.bi.Stats())
+	return err
 }
